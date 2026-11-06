@@ -1,0 +1,30 @@
+name: Make me an .exe
+description: Turn a public GitHub project into one Windows program you can download.
+title: "Make me an .exe"
+labels:
+  - build-exe
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Paste the link to a public project on GitHub. You don't need to install anything.
+
+        In a few minutes I'll comment on this issue with a download link. I build the program on a Windows machine and run it once before I send the link.
+
+        Private projects and links that aren't on github.com are turned down.
+  - type: input
+    id: repo
+    attributes:
+      label: GitHub repo URL
+      description: A public project, for example https://github.com/owner/name
+      placeholder: https://github.com/owner/name
+    validations:
+      required: true
+  - type: input
+    id: test_args
+    attributes:
+      label: Test arguments
+      description: Optional. What I should type to check the program starts. Leave this blank and I'll try --help. Use --version if --help doesn't work.
+      placeholder: --help
+    validations:
+      required: false

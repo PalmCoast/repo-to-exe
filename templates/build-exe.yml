@@ -35,6 +35,14 @@ on:
         description: "Publish a GitHub Release with the .exe"
         type: boolean
         default: true
+      submodules:
+        description: "Also fetch git submodules"
+        type: boolean
+        default: true
+      timeout_minutes:
+        description: "Stop the build after this many minutes"
+        type: string
+        default: "45"
   workflow_call:
     inputs:
       repo: { type: string, required: true }
@@ -45,23 +53,54 @@ on:
       name: { type: string, default: "" }
       extra: { type: string, default: "" }
       release: { type: boolean, default: true }
+      submodules: { type: boolean, default: true }
+      timeout_minutes: { type: string, default: "45" }
+    outputs:
+      name:
+        description: "Program name"
+        value: ${{ jobs.build.outputs.name }}
+      download_url:
+        description: "Release asset URL"
+        value: ${{ jobs.publish.outputs.download_url }}
+      test_result:
+        description: "pass, or a short failure code"
+        value: ${{ jobs.build.outputs.test_result }}
+      detail:
+        description: "Plain-language failure sentence"
+        value: ${{ jobs.build.outputs.detail }}
+      snippet:
+        description: "First line the program printed"
+        value: ${{ jobs.build.outputs.snippet }}
 
+# The build job only reads code. Publishing happens in a later job that never
+# runs the target project, so a request cannot use this repo's write token.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes || '45') }}
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
+    outputs:
+      name: ${{ steps.outcome.outputs.name }}
+      tag: ${{ steps.outcome.outputs.tag }}
+      sha: ${{ steps.outcome.outputs.sha }}
+      lang: ${{ steps.outcome.outputs.lang }}
+      test_result: ${{ steps.outcome.outputs.test_result }}
+      detail: ${{ steps.outcome.outputs.detail }}
+      snippet: ${{ steps.outcome.outputs.snippet }}
     steps:
       - name: Get Repo-to-EXE scripts
         uses: actions/checkout@v4
         with:
           repository: PalmCoast/repo-to-exe
           path: r2e
+          persist-credentials: false
 
       - name: Get the target repo
         uses: actions/checkout@v4
@@ -69,33 +108,38 @@ jobs:
           repository: ${{ inputs.repo }}
           ref: ${{ inputs.ref }}
           path: src
-          submodules: recursive
+          submodules: ${{ (inputs.submodules == true || inputs.submodules == 'true') && 'recursive' || 'false' }}
+          persist-credentials: false
 
       - name: Detect language and entry point
         id: detect
+        continue-on-error: true
         run: python r2e/scripts/detect.py src --lang "${{ inputs.lang }}" --entry "${{ inputs.entry }}" --name "${{ inputs.name }}"
 
       - name: Set up Python
-        if: steps.detect.outputs.lang == 'python'
+        if: steps.detect.outcome == 'success' && steps.detect.outputs.lang == 'python'
         uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Set up Node
-        if: steps.detect.outputs.lang == 'node'
+        if: steps.detect.outcome == 'success' && steps.detect.outputs.lang == 'node'
         uses: actions/setup-node@v4
         with: { node-version: "22" }
       - name: Set up Go
-        if: steps.detect.outputs.lang == 'go'
+        if: steps.detect.outcome == 'success' && steps.detect.outputs.lang == 'go'
         uses: actions/setup-go@v5
         with: { go-version: "stable", cache: false }
       - name: Set up Rust
-        if: steps.detect.outputs.lang == 'rust'
+        if: steps.detect.outcome == 'success' && steps.detect.outputs.lang == 'rust'
         run: rustup default stable && rustup target add x86_64-pc-windows-msvc
       - name: Set up .NET
-        if: steps.detect.outputs.lang == 'dotnet'
+        if: steps.detect.outcome == 'success' && steps.detect.outputs.lang == 'dotnet'
         uses: actions/setup-dotnet@v4
         with: { dotnet-version: "8.0.x" }
 
       - name: Build the .exe
+        id: compile
+        if: steps.detect.outcome == 'success'
+        continue-on-error: true
         env:
           SRC: src
           OUT: dist
@@ -107,6 +151,9 @@ jobs:
         run: bash r2e/scripts/build.sh
 
       - name: Run the .exe for real (smoke test)
+        id: test
+        if: steps.compile.outcome == 'success'
+        continue-on-error: true
         env:
           EXE: dist/${{ steps.detect.outputs.name }}.exe
           TEST_ARGS: ${{ inputs.test_args }}
@@ -116,6 +163,7 @@ jobs:
 
       - name: Collect license and version info
         id: meta
+        if: steps.test.outcome == 'success'
         run: |
           NAME='${{ steps.detect.outputs.name }}'
           LIC=$(ls src | grep -iE '^(LICENSE|LICENCE|COPYING)' | head -1 || true)
@@ -128,19 +176,51 @@ jobs:
           ls -la dist
 
       - name: Upload as a workflow artifact
+        if: steps.meta.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.detect.outputs.name }}-windows-exe
           path: dist/*
+          if-no-files-found: error
 
-      - name: Publish GitHub Release
-        if: inputs.release
+      - name: Record the outcome
+        id: outcome
+        if: always()
         env:
-          GH_TOKEN: ${{ github.token }}
           NAME: ${{ steps.detect.outputs.name }}
           TAG: ${{ steps.meta.outputs.tag }}
-          REPO_IN: ${{ inputs.repo }}
+          SHA: ${{ steps.meta.outputs.sha }}
           LANG_ID: ${{ steps.detect.outputs.lang }}
+        run: python r2e/scripts/record-outcome.py
+
+      - name: Stop if the build or the test failed
+        if: steps.detect.outcome != 'success' || steps.compile.outcome != 'success' || steps.test.outcome != 'success'
+        run: exit 1
+
+  publish:
+    needs: build
+    if: inputs.release && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      download_url: ${{ steps.rel.outputs.url }}
+    steps:
+      - name: Download the built files
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.name }}-windows-exe
+          path: dist
+
+      - name: Publish GitHub Release
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ needs.build.outputs.name }}
+          TAG: ${{ needs.build.outputs.tag }}
+          SHA: ${{ needs.build.outputs.sha }}
+          REPO_IN: ${{ inputs.repo }}
+          LANG_ID: ${{ needs.build.outputs.lang }}
           TEST_ARGS: ${{ inputs.test_args }}
         run: |
           URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$NAME.exe"
@@ -149,7 +229,7 @@ jobs:
 
           **[Download $NAME.exe]($URL)**. No Python, Node or anything else to install.
 
-          - Built from [$REPO_IN](https://github.com/$REPO_IN) at commit \`${{ steps.meta.outputs.sha }}\` ($LANG_ID).
+          - Built from [$REPO_IN](https://github.com/$REPO_IN) at commit \`$SHA\` ($LANG_ID).
           - Tested for real on a fresh Windows machine (GitHub's windows-latest): \`$NAME.exe $TEST_ARGS\` ran and exited cleanly. The full output is in \`$NAME-test-log.txt\`.
           - The original project's license is included as \`$NAME-LICENSE.txt\`. All credit goes to the original authors. This is an unofficial build.
 
@@ -162,4 +242,5 @@ jobs:
           gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "$NAME for Windows ($TAG)" --notes-file notes.md
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "### Download: $URL" >> "$GITHUB_STEP_SUMMARY"

@@ -4,8 +4,10 @@
 # Result: $OUT/$NAME.exe
 set -euo pipefail
 SRC="$(cd "$SRC" && pwd)"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
+mkdir -p outcome; REPORT="$(cd outcome && pwd)"
 EXE="$OUT/$NAME.exe"
 WORK="$(mktemp -d)"
+note_failure() { printf '%s\n' "$1" > "$REPORT/result.txt"; printf '%s\n' "$2" > "$REPORT/result-detail.txt"; }
 echo "Building '$NAME' ($LANG_ID) from entry '$ENTRY' -> $EXE"
 cd "$SRC"
 
@@ -167,8 +169,17 @@ dotnet)
   [ -f "$BUILT" ] || BUILT="$(ls "$WORK"/publish/*.exe | head -1)"
   cp "$BUILT" "$EXE"
   ;;
-*) echo "Unknown language '$LANG_ID'"; exit 2 ;;
+*)
+  note_failure "unknown-lang" "I couldn't tell how to build that project. It needs to be Python, Node, Go, Rust, or C#."
+  echo "Unknown language '$LANG_ID'"; exit 2 ;;
 esac
 
+BYTES=$(stat -c %s "$EXE" 2>/dev/null || wc -c < "$EXE")
+# Public requests share one free builder. Refuse enormous programs.
+if [ "$BYTES" -gt $((200 * 1024 * 1024)) ]; then
+  note_failure "too-large" "The program came out bigger than 200 MB, so I didn't publish it."
+  echo "Exe is $BYTES bytes, over the 200 MB cap."
+  exit 1
+fi
 ls -la "$EXE"
 echo "Built $(du -h "$EXE" | cut -f1) exe."

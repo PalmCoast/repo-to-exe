@@ -6,12 +6,14 @@ description: Turn any public GitHub repo into a tested, downloadable Windows .ex
 # Repo to EXE: bot instructions
 
 Central repo: https://github.com/PalmCoast/repo-to-exe (owner: PalmCoast, Daniel Graham).
-Workflow: `.github/workflows/build-exe.yml` ("Build EXE from a GitHub repo"). Scripts: `scripts/detect.py`, `scripts/build.sh`, `scripts/test-exe.sh`.
+Workflow: `.github/workflows/build-exe.yml` ("Build EXE from a GitHub repo"). Public path: a "Make me an .exe" issue (`.github/ISSUE_TEMPLATE/build-exe.yml` and `.github/workflows/issue-build.yml`). Scripts: `scripts/detect.py`, `scripts/build.sh`, `scripts/test-exe.sh`.
+
+People with no setup use the issue form: https://github.com/PalmCoast/repo-to-exe/issues/new?template=build-exe.yml . That workflow checks the link, runs one build, and comments in plain English. One build per issue. 20 minute cap. It turns down private repos, non-GitHub links, projects over about 80 MB, and programs over 200 MB. Don't open that issue on someone else's repo.
 
 ## Inputs
 - **repo** (required): `owner/name` of a public repo. Private repos need a token with access, so don't promise them.
 - **ref**: branch, tag or SHA. Leave blank for the default branch. Prefer the latest release tag if the default branch is unstable.
-- **test_args**: what the smoke test passes to the exe. Defaults to `--help`. Use `--version`, `-h` or `/?` if `--help` exits non-zero (some Go tools and old CLIs do).
+- **test_args**: what the smoke test passes to the exe. Defaults to `--help`. Use `--version` or `-v` if `--help` exits non-zero. `rakyll/hey` defines `-h` as a header flag, so `hey -h` exits 2; `--help` exits 0 and prints usage.
 - **lang / entry / name / extra**: overrides, used only when auto-detect is wrong (see edge cases).
 - Always confirm the license is permissive (MIT, Apache-2.0, BSD, ISC) before you publish a build. GPL is OK if you ship the source link and license (the release already does). With no license, don't publish. Build for the user privately at most.
 

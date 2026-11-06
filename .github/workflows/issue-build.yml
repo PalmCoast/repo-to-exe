@@ -1,0 +1,138 @@
+name: Make me an .exe
+
+# One run per new issue that the form labels build-exe. Editing or reopening
+# an issue does not start another build.
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: public-exe-build
+  cancel-in-progress: false
+
+jobs:
+  check:
+    # The form applies the build-exe label. The heading is the fallback when that
+    # label does not exist yet, which is how a stock GitHub repo starts out.
+    if: contains(github.event.issue.labels.*.name, 'build-exe') || contains(github.event.issue.body || '', '### GitHub repo URL')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ok: ${{ steps.parse.outputs.ok }}
+      skip: ${{ steps.parse.outputs.skip }}
+      repo: ${{ steps.parse.outputs.repo }}
+      test_args: ${{ steps.parse.outputs.test_args }}
+      message: ${{ steps.parse.outputs.message }}
+    steps:
+      - name: Get the parser
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Read the form
+        id: parse
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          GH_TOKEN: ${{ github.token }}
+          REPO_FULL: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: python3 scripts/parse-issue.py
+
+      - name: Say the build has started
+        if: steps.parse.outputs.ok == 'true' && steps.parse.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPO: ${{ steps.parse.outputs.repo }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: python3 scripts/issue-started.py
+
+  build:
+    needs: check
+    if: needs.check.outputs.ok == 'true' && needs.check.outputs.skip != 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-exe.yml
+    with:
+      repo: ${{ needs.check.outputs.repo }}
+      test_args: ${{ needs.check.outputs.test_args }}
+      release: true
+      submodules: false
+      timeout_minutes: "20"
+
+  reply:
+    needs: [check, build]
+    if: always() && needs.check.outputs.ok == 'true' && needs.check.outputs.skip != 'true' && (needs.build.result == 'success' || needs.build.result == 'failure' || needs.build.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Get the reply script
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Comment with the result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MODE: result
+          JOB_RESULT: ${{ needs.build.result }}
+          NAME: ${{ needs.build.outputs.name }}
+          DOWNLOAD_URL: ${{ needs.build.outputs.download_url }}
+          DETAIL: ${{ needs.build.outputs.detail }}
+          SNIPPET: ${{ needs.build.outputs.snippet }}
+          SOURCE_REPO: ${{ needs.check.outputs.repo }}
+          TEST_ARGS: ${{ needs.check.outputs.test_args }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/issue-reply.py
+
+  reject:
+    needs: check
+    if: needs.check.result == 'success' && needs.check.outputs.ok != 'true' && needs.check.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Get the reply script
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Explain why this request was turned down
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MODE: reject
+          MSG: ${{ needs.check.outputs.message }}
+        run: python3 scripts/issue-reply.py
+
+  oops:
+    needs: check
+    if: needs.check.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Get the reply script
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Say the checker broke
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MODE: oops
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/issue-reply.py
