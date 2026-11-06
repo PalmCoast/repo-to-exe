@@ -50,17 +50,69 @@ node)
   cp "$ENTRY" "$SHIM"
   # Bundle everything into one CommonJS file. Optional packages that aren't installed
   # (e.g. spdy, fsevents) are marked external and retried, so they fail only if actually used.
+  # Only modules that are not installed (optional deps such as spdy) may be left
+  # external. An installed package that esbuild fails to look up — seen on Windows
+  # with scoped packages — is aliased to the file Node resolves, so the single-file
+  # exe still contains it. Marking it external makes Node SEA crash at startup with
+  # ERR_UNKNOWN_BUILTIN_MODULE.
   EXTS=()
+  ALIASES=()
+  HANDLED=" "
   for attempt in 1 2 3 4 5 6; do
     # shellcheck disable=SC2086
     if npx --yes esbuild@0.24.2 "$SHIM" --bundle --platform=node --format=cjs --target=node22 \
-        --outfile="$WORK/bundle.cjs" --log-level=error "${EXTS[@]}" ${EXTRA:-} 2> "$WORK/esbuild.err"; then
+        --outfile="$WORK/bundle.cjs" --log-level=error "${EXTS[@]}" "${ALIASES[@]}" ${EXTRA:-} 2> "$WORK/esbuild.err"; then
       break
     fi
     cat "$WORK/esbuild.err"
     MISSING=$(grep -oE 'Could not resolve "[^"]+"' "$WORK/esbuild.err" | sed -E 's/Could not resolve "([^"]+)"/\1/' | sort -u)
     if [ -z "$MISSING" ] || [ "$attempt" = 6 ]; then echo "esbuild failed"; exit 1; fi
-    for m in $MISSING; do echo "Marking optional module '$m' as external"; EXTS+=("--external:$m"); done
+    PROGRESS=0
+    for m in $MISSING; do
+      case " $HANDLED " in *" $m "*) continue ;; esac
+      HANDLED="$HANDLED$m "
+      case "$m" in
+        ./*|../*|/*|node:*)
+          echo "Marking '$m' as external"
+          EXTS+=("--external:$m")
+          PROGRESS=1
+          continue
+          ;;
+      esac
+      REL="$(node -e '
+        const path = require("path");
+        try {
+          const resolved = require.resolve(process.argv[1]);
+          let rel = path.relative(process.cwd(), resolved).split(path.sep).join("/");
+          if (!rel.startsWith(".") && !rel.startsWith("/")) rel = "./" + rel;
+          process.stdout.write(rel);
+        } catch (e) {
+          process.exit(1);
+        }
+      ' "$m" 2>/dev/null || true)"
+      if [ -z "$REL" ]; then
+        echo "Module '$m' is not installed; trying to install it"
+        if npm install --no-save --omit=dev --ignore-scripts "$m" >/dev/null; then
+          REL="$(node -e '
+            const path = require("path");
+            const resolved = require.resolve(process.argv[1]);
+            let rel = path.relative(process.cwd(), resolved).split(path.sep).join("/");
+            if (!rel.startsWith(".") && !rel.startsWith("/")) rel = "./" + rel;
+            process.stdout.write(rel);
+          ' "$m" 2>/dev/null || true)"
+        fi
+      fi
+      if [ -n "$REL" ]; then
+        echo "Aliasing installed module '$m' to $REL"
+        ALIASES+=("--alias:$m=$REL")
+        PROGRESS=1
+      else
+        echo "Marking missing module '$m' as external"
+        EXTS+=("--external:$m")
+        PROGRESS=1
+      fi
+    done
+    if [ "$PROGRESS" -eq 0 ]; then echo "esbuild failed"; exit 1; fi
   done
   rm -f "$SHIM"
   cd "$WORK"
