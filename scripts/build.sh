@@ -66,9 +66,32 @@ node)
   cd "$WORK"
   printf '{"main":"bundle.cjs","output":"sea-prep.blob","disableExperimentalSEAWarning":true}' > sea-config.json
   node --experimental-sea-config sea-config.json
-  cp "$(node -p process.execPath)" "$EXE"
-  npx --yes postject@1.0.0-alpha.6 "$EXE" NODE_SEA_BLOB sea-prep.blob \
+  # Git Bash cannot cp the path Node prints on Windows ("C:\Program Files\nodejs\node.exe").
+  node -e "require('fs').copyFileSync(process.execPath, 'sea.exe')"
+  # Injecting into a signed node.exe makes Windows reject the image. The Windows SDK
+  # on GitHub-hosted runners provides signtool; other systems skip this.
+  SIG=""
+  if command -v signtool >/dev/null 2>&1; then
+    SIG="$(command -v signtool)"
+  elif [ -d "/c/Program Files (x86)/Windows Kits/10/bin" ]; then
+    SIG="$(find "/c/Program Files (x86)/Windows Kits/10/bin" -path '*/x64/signtool.exe' 2>/dev/null | sort | tail -1 || true)"
+  fi
+  if [ -n "$SIG" ]; then
+    echo "Removing Authenticode signature before injection"
+    MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 "$SIG" remove /s sea.exe || echo "signtool remove failed; continuing"
+  fi
+  npx --yes postject@1.0.0-alpha.6 sea.exe NODE_SEA_BLOB sea-prep.blob \
       --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 --overwrite
+  # $EXE may be a Git Bash path (/d/a/...) which Windows Node cannot open.
+  EXE_DEST="$EXE" node <<'NODE'
+const fs = require("fs");
+const { execFileSync } = require("child_process");
+let dest = process.env.EXE_DEST;
+if (process.platform === "win32" && dest.startsWith("/")) {
+  dest = execFileSync("cygpath", ["-w", dest], { encoding: "utf8" }).trim();
+}
+fs.copyFileSync("sea.exe", dest);
+NODE
   ;;
 go)
   LDF="-s -w"; [ "$GUI" = "true" ] && LDF="$LDF -H windowsgui"

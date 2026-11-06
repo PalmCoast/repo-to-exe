@@ -1,0 +1,165 @@
+name: Build EXE from a GitHub repo
+
+# Run it from the Actions tab ("Run workflow"), or call it from another repo's workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "GitHub repo to turn into an .exe (owner/name)"
+        required: true
+      ref:
+        description: "Branch, tag or commit (blank = default branch)"
+        required: false
+        default: ""
+      test_args:
+        description: "Arguments for the smoke test run (blank = --help)"
+        required: false
+        default: "--help"
+      lang:
+        description: "Force a language: python, node, go, rust, dotnet (blank = auto-detect)"
+        required: false
+        default: ""
+      entry:
+        description: "Force the entry point (blank = auto-detect)"
+        required: false
+        default: ""
+      name:
+        description: "Name of the .exe (blank = auto)"
+        required: false
+        default: ""
+      extra:
+        description: "Extra flags passed to the builder (PyInstaller / esbuild / go build / cargo / dotnet)"
+        required: false
+        default: ""
+      release:
+        description: "Publish a GitHub Release with the .exe"
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      repo: { type: string, required: true }
+      ref: { type: string, default: "" }
+      test_args: { type: string, default: "--help" }
+      lang: { type: string, default: "" }
+      entry: { type: string, default: "" }
+      name: { type: string, default: "" }
+      extra: { type: string, default: "" }
+      release: { type: boolean, default: true }
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Get Repo-to-EXE scripts
+        uses: actions/checkout@v4
+        with:
+          repository: PalmCoast/repo-to-exe
+          path: r2e
+
+      - name: Get the target repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.ref }}
+          path: src
+          submodules: recursive
+
+      - name: Detect language and entry point
+        id: detect
+        run: python r2e/scripts/detect.py src --lang "${{ inputs.lang }}" --entry "${{ inputs.entry }}" --name "${{ inputs.name }}"
+
+      - name: Set up Python
+        if: steps.detect.outputs.lang == 'python'
+        uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Set up Node
+        if: steps.detect.outputs.lang == 'node'
+        uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Set up Go
+        if: steps.detect.outputs.lang == 'go'
+        uses: actions/setup-go@v5
+        with: { go-version: "stable", cache: false }
+      - name: Set up Rust
+        if: steps.detect.outputs.lang == 'rust'
+        run: rustup default stable && rustup target add x86_64-pc-windows-msvc
+      - name: Set up .NET
+        if: steps.detect.outputs.lang == 'dotnet'
+        uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+
+      - name: Build the .exe
+        env:
+          SRC: src
+          OUT: dist
+          LANG_ID: ${{ steps.detect.outputs.lang }}
+          ENTRY: ${{ steps.detect.outputs.entry }}
+          NAME: ${{ steps.detect.outputs.name }}
+          GUI: ${{ steps.detect.outputs.gui }}
+          EXTRA: ${{ inputs.extra }}
+        run: bash r2e/scripts/build.sh
+
+      - name: Run the .exe for real (smoke test)
+        env:
+          EXE: dist/${{ steps.detect.outputs.name }}.exe
+          TEST_ARGS: ${{ inputs.test_args }}
+          GUI: ${{ steps.detect.outputs.gui }}
+          LOG: dist/${{ steps.detect.outputs.name }}-test-log.txt
+        run: bash r2e/scripts/test-exe.sh
+
+      - name: Collect license and version info
+        id: meta
+        run: |
+          NAME='${{ steps.detect.outputs.name }}'
+          LIC=$(ls src | grep -iE '^(LICENSE|LICENCE|COPYING)' | head -1 || true)
+          [ -n "$LIC" ] && cp "src/$LIC" "dist/$NAME-LICENSE.txt"
+          SHA=$(git -C src rev-parse --short HEAD)
+          TAG="$NAME-$SHA"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          (cd dist && sha256sum "$NAME.exe" > "$NAME.exe.sha256")
+          ls -la dist
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.detect.outputs.name }}-windows-exe
+          path: dist/*
+
+      - name: Publish GitHub Release
+        if: inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.detect.outputs.name }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          REPO_IN: ${{ inputs.repo }}
+          LANG_ID: ${{ steps.detect.outputs.lang }}
+          TEST_ARGS: ${{ inputs.test_args }}
+        run: |
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$NAME.exe"
+          cat > notes.md <<NOTES
+          ## $NAME for Windows: download and run
+
+          **[Download $NAME.exe]($URL)**. No Python, Node or anything else to install.
+
+          - Built from [$REPO_IN](https://github.com/$REPO_IN) at commit \`${{ steps.meta.outputs.sha }}\` ($LANG_ID).
+          - Tested for real on a fresh Windows machine (GitHub's windows-latest): \`$NAME.exe $TEST_ARGS\` ran and exited cleanly. The full output is in \`$NAME-test-log.txt\`.
+          - The original project's license is included as \`$NAME-LICENSE.txt\`. All credit goes to the original authors. This is an unofficial build.
+
+          ### "Windows protected your PC"?
+          This .exe is new and isn't code-signed, so Windows SmartScreen may warn you the first time. Click **More info**, then **Run anyway**. It isn't a sign that the file is broken. It means Windows hasn't seen this file before. You can check the file matches this release with the SHA-256 in \`$NAME.exe.sha256\`.
+
+          ### How to use it
+          This is a command-line tool. Open **Command Prompt** or **PowerShell** in the folder where you saved it and type \`$NAME.exe --help\`.
+          NOTES
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$NAME for Windows ($TAG)" --notes-file notes.md
+          echo "### Download: $URL" >> "$GITHUB_STEP_SUMMARY"

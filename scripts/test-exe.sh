@@ -15,8 +15,34 @@ if [ "$GUI" = "true" ] && [ -z "${TEST_ARGS:-}" ]; then
   exit 0
 fi
 echo "Command: $(basename "$EXE") ${TEST_ARGS:-}" >> "$LOG"
+# GNU timeout is not in Git Bash, and Windows timeout.exe is a different command.
+# Python is on every GitHub runner and can start a Windows .exe with a real timeout.
+EXE_RUN="$EXE"
+if command -v cygpath >/dev/null 2>&1; then
+  EXE_RUN="$(cygpath -w "$EXE")"
+fi
+PY=python
+command -v python >/dev/null 2>&1 || PY=python3
 # shellcheck disable=SC2086
-timeout 120 "$EXE" ${TEST_ARGS:-} > out.txt 2>&1 < /dev/null
+"$PY" - "$EXE_RUN" ${TEST_ARGS:-} <<'PY'
+import subprocess, sys
+exe, *args = sys.argv[1:]
+try:
+    proc = subprocess.run(
+        [exe, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        timeout=120,
+    )
+except subprocess.TimeoutExpired as exc:
+    with open("out.txt", "wb") as fh:
+        fh.write(exc.stdout or b"")
+    sys.exit(124)
+with open("out.txt", "wb") as fh:
+    fh.write(proc.stdout or b"")
+sys.exit(proc.returncode)
+PY
 CODE=$?
 echo "Exit code: $CODE" >> "$LOG"
 echo "----- output -----" >> "$LOG"; cat out.txt >> "$LOG"
