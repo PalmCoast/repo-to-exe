@@ -1,0 +1,17 @@
+# Drop this file into any repo (or your fork) at .github/workflows/exe-release.yml
+# Every time you publish a tag like v1.2.3 (or click "Run workflow"), it builds a
+# Windows .exe, runs it once to prove it works, and attaches it to a Release in THIS repo.
+name: Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  exe:
+    uses: PalmCoast/repo-to-exe/.github/workflows/build-exe.yml@main
+    with:
+      repo: ${{ github.repository }}
+      ref: ${{ github.ref_name }}
+      test_args: "--help"
