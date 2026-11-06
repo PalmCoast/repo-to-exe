@@ -10,9 +10,9 @@ Each one was built and then **run once for real on a clean Windows machine** bef
 
 | Program | What it does | Original project | Download |
 |---|---|---|---|
-| tldr | Short, plain-English cheat sheets for terminal commands | [tldr-pages/tldr-python-client](https://github.com/tldr-pages/tldr-python-client) (Python, MIT) | see [Releases](https://github.com/PalmCoast/repo-to-exe/releases) |
-| hey | Load-tests a website by sending it lots of requests | [rakyll/hey](https://github.com/rakyll/hey) (Go, Apache-2.0) | see [Releases](https://github.com/PalmCoast/repo-to-exe/releases) |
-| http-server | Shares a folder as a website on your computer, with no setup | [http-party/http-server](https://github.com/http-party/http-server) (Node.js, MIT) | see [Releases](https://github.com/PalmCoast/repo-to-exe/releases) |
+| tldr | Short, plain-English cheat sheets for terminal commands | [tldr-pages/tldr-python-client](https://github.com/tldr-pages/tldr-python-client) (Python, MIT) | [tldr.exe](https://github.com/PalmCoast/repo-to-exe/releases/download/tldr-c33ca6d/tldr.exe) |
+| hey | Load-tests a website by sending it lots of requests | [rakyll/hey](https://github.com/rakyll/hey) (Go, Apache-2.0) | [hey.exe](https://github.com/PalmCoast/repo-to-exe/releases/download/hey-5626f79/hey.exe) |
+| http-server | Shares a folder as a website on your computer, with no setup | [http-party/http-server](https://github.com/http-party/http-server) (Node.js, MIT) | [http-server.exe](https://github.com/PalmCoast/repo-to-exe/releases/download/http-server-0d3b7bb/http-server.exe) |
 
 Every release includes the `.exe`, a test log showing what happened when it ran, a SHA-256 checksum and the original project's license. These are unofficial builds, and all credit goes to the original authors.
 
