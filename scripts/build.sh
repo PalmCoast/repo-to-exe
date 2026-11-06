@@ -48,9 +48,20 @@ node)
   # copy the entry next to itself with a .js name so relative requires still resolve and esbuild knows the loader
   ENTRY_DIR="$(dirname "$ENTRY")"; SHIM="$ENTRY_DIR/__r2e_entry.js"
   cp "$ENTRY" "$SHIM"
-  # shellcheck disable=SC2086
-  npx --yes esbuild@0.24.2 "$SHIM" --bundle --platform=node --format=cjs --target=node22 \
-      --outfile="$WORK/bundle.cjs" --log-level=warning ${EXTRA:-}
+  # Bundle everything into one CommonJS file. Optional packages that aren't installed
+  # (e.g. spdy, fsevents) are marked external and retried, so they fail only if actually used.
+  EXTS=()
+  for attempt in 1 2 3 4 5 6; do
+    # shellcheck disable=SC2086
+    if npx --yes esbuild@0.24.2 "$SHIM" --bundle --platform=node --format=cjs --target=node22 \
+        --outfile="$WORK/bundle.cjs" --log-level=error "${EXTS[@]}" ${EXTRA:-} 2> "$WORK/esbuild.err"; then
+      break
+    fi
+    cat "$WORK/esbuild.err"
+    MISSING=$(grep -oE 'Could not resolve "[^"]+"' "$WORK/esbuild.err" | sed -E 's/Could not resolve "([^"]+)"/\1/' | sort -u)
+    if [ -z "$MISSING" ] || [ "$attempt" = 6 ]; then echo "esbuild failed"; exit 1; fi
+    for m in $MISSING; do echo "Marking optional module '$m' as external"; EXTS+=("--external:$m"); done
+  done
   rm -f "$SHIM"
   cd "$WORK"
   printf '{"main":"bundle.cjs","output":"sea-prep.blob","disableExperimentalSEAWarning":true}' > sea-config.json

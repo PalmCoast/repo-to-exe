@@ -121,10 +121,7 @@ jobs:
           LIC=$(ls src | grep -iE '^(LICENSE|LICENCE|COPYING)' | head -1 || true)
           [ -n "$LIC" ] && cp "src/$LIC" "dist/$NAME-LICENSE.txt"
           SHA=$(git -C src rev-parse --short HEAD)
-          VER=$(git -C src describe --tags --abbrev=0 2>/dev/null || true)
-          git -C src fetch --tags --quiet 2>/dev/null || true
-          VER=$(git -C src describe --tags --abbrev=0 2>/dev/null || echo "")
-          TAG="$NAME-${VER:+$VER-}$SHA"
+          TAG="$NAME-$SHA"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           (cd dist && sha256sum "$NAME.exe" > "$NAME.exe.sha256")
