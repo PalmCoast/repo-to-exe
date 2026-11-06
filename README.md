@@ -21,6 +21,7 @@ Each one was built, then run once on a clean Windows machine, before it was publ
 | tldr | Short, plain-English cheat sheets for terminal commands | [tldr-pages/tldr-python-client](https://github.com/tldr-pages/tldr-python-client) (Python, MIT) | [tldr.exe](https://github.com/PalmCoast/repo-to-exe/releases/download/tldr-c33ca6d/tldr.exe) |
 | hey | Load-tests a website by sending it lots of requests | [rakyll/hey](https://github.com/rakyll/hey) (Go, Apache-2.0) | [hey.exe](https://github.com/PalmCoast/repo-to-exe/releases/download/hey-5626f79/hey.exe) |
 | http-server | Shares a folder as a website on your computer, with no setup | [http-party/http-server](https://github.com/http-party/http-server) (Node.js, MIT) | [http-server.exe](https://github.com/PalmCoast/repo-to-exe/releases/download/http-server-0d3b7bb/http-server.exe) |
+| httpstat | Shows how long each step takes when you open a web address | [davecheney/httpstat](https://github.com/davecheney/httpstat) (Go, MIT) | [httpstat.exe](https://github.com/PalmCoast/repo-to-exe/releases/download/httpstat-a83cb1d/httpstat.exe) |
 
 Save the file, open that folder, click the address bar, type `cmd`, and press Enter. Then type the program name, for example `tldr.exe --help`.
 
