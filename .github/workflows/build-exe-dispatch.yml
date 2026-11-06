@@ -1,0 +1,26 @@
+# workflow_dispatch needs actions:write. A token that can push (contents:write)
+# can still start the same build by sending a repository_dispatch of type build-exe:
+#   gh api --method POST repos/PalmCoast/repo-to-exe/dispatches \
+#     --input - <<EOF
+#   {"event_type":"build-exe","client_payload":{"repo":"owner/name","test_args":"--help"}}
+#   EOF
+name: Build EXE (API dispatch)
+on:
+  repository_dispatch:
+    types: [build-exe]
+permissions:
+  contents: write
+jobs:
+  build:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-exe.yml
+    with:
+      repo: ${{ github.event.client_payload.repo }}
+      ref: ${{ github.event.client_payload.ref || '' }}
+      test_args: ${{ github.event.client_payload.test_args || '--help' }}
+      lang: ${{ github.event.client_payload.lang || '' }}
+      entry: ${{ github.event.client_payload.entry || '' }}
+      name: ${{ github.event.client_payload.name || '' }}
+      extra: ${{ github.event.client_payload.extra || '' }}
+      release: true
